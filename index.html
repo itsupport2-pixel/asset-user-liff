@@ -4984,6 +4984,13 @@ window.addEventListener('DOMContentLoaded', () => {
 .bh-chip.p{background:#fdf3e1;color:#b7791f}.bh-chip.a{background:#e7f6ee;color:#1f8a55}.bh-chip.r{background:#fbe9e7;color:#c0392b}.bh-chip.b{background:#e8f0fc;color:#2c5fb3}
 .ta-btns{display:flex;gap:10px;margin-top:10px}.ta-btns button{flex:1;border:none;border-radius:14px;padding:16px;font-size:23px;font-weight:800;font-family:inherit;cursor:pointer}
 .ta-ok{background:#e7f6ee;color:#1f8a55}.ta-no{background:#fbe9e7;color:#c0392b}
+.ui-dlg-ov{position:fixed;inset:0;z-index:10000;background:rgba(15,20,35,.5);display:flex;align-items:flex-end;justify-content:center}
+.ui-dlg{background:var(--card);width:100%;max-width:800px;border-radius:26px 26px 0 0;padding:26px 26px calc(26px + env(safe-area-inset-bottom,0px));text-align:center}
+.ui-dlg-ic{width:64px;height:64px;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:28px;background:#e7f6ee;color:#1f8a55}.ui-dlg-ic.d{background:#fbe9e7;color:#c0392b}
+.ui-dlg h3{margin:0 0 8px;font-size:26px}.ui-dlg p{margin:0 0 16px;font-size:19px;color:var(--text3)}
+.ui-dlg textarea{width:100%;box-sizing:border-box;font:inherit;font-size:20px;border:1.5px solid var(--line);border-radius:16px;padding:14px;min-height:110px;background:var(--bg);color:var(--text)}
+.ui-dlg-ft{display:flex;gap:12px;margin-top:16px}.ui-dlg-ft button{flex:1;border:none;border-radius:16px;padding:18px;font:inherit;font-size:22px;font-weight:800}
+.ui-dlg-ft .c{background:var(--bg);color:var(--text2)}.ui-dlg-ft .ok{background:#1f8a55;color:#fff}.ui-dlg-ft .ok.d{background:#c0392b}
 .ta-tabs{display:flex;gap:8px;margin-bottom:14px}.ta-tabs button{flex:1;border:1.5px solid var(--line);background:var(--card);border-radius:14px;padding:14px;font-size:21px;font-weight:700;font-family:inherit;color:var(--text2)}
 .ta-tabs button.on{border-color:var(--gold);color:var(--gold)}
 </style>
@@ -5067,8 +5074,19 @@ window.addEventListener('DOMContentLoaded', () => {
   };
   window.taDecide=function(id,dec){
     var comment='';
-    if(dec==='reject'){ comment=prompt('เหตุผลที่ไม่อนุมัติ (ไม่บังคับ)',''); if(comment===null) return; }
-    else if(!confirm('ยืนยันอนุมัติ '+id+' ?')) return;
+    if(arguments[2]===undefined){   // หน้าต่างยืนยันแบบเดียวกับแอป (แทน confirm/prompt ของเบราว์เซอร์)
+      var rej=dec==='reject', ov=document.createElement('div'); ov.className='ui-dlg-ov';
+      ov.innerHTML='<div class="ui-dlg"><div class="ui-dlg-ic'+(rej?' d':'')+'"><i class="fas '+(rej?'fa-circle-xmark':'fa-circle-check')+'"></i></div>'
+        +'<h3>'+(rej?'ไม่อนุมัติ ':'อนุมัติ ')+esc(id)+'</h3><p>'+(rej?'ระบุเหตุผลเพื่อแจ้งผู้แจ้ง':'รับเรื่องแจ้งของเสีย และเปลี่ยนสถานะเป็น "ส่งซ่อม"')+'</p>'
+        +(rej?'<textarea placeholder="เช่น รูปไม่ชัด / ข้อมูลไม่ครบ"></textarea>':'')
+        +'<div class="ui-dlg-ft"><button class="c">ยกเลิก</button><button class="ok'+(rej?' d':'')+'">'+(rej?'ไม่อนุมัติ':'อนุมัติ')+'</button></div></div>';
+      document.body.appendChild(ov);
+      var done=function(ok){ var v=ov.querySelector('textarea'); v=v?v.value.trim():''; ov.remove(); if(ok) taDecide(id,dec,v); };
+      ov.addEventListener('click',function(e){ if(e.target===ov) done(false); });
+      ov.querySelector('.c').onclick=function(){ done(false); }; ov.querySelector('.ok').onclick=function(){ done(true); };
+      return;
+    }
+    comment=arguments[2];
     gs('teamDecideBrokenReport',{userId:CU&&CU.UserID,RequestID:id,decision:dec,comment:comment||''},function(res){
       if(!res||!res.success){ toast('ไม่สำเร็จ',(res&&res.error)||'','e'); return; }
       toast(dec==='reject'?'ไม่อนุมัติแล้ว':'อนุมัติแล้ว',id,'s'); taLoad();
