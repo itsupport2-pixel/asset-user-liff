@@ -1296,20 +1296,32 @@ let CU = null;
 let myAssets = [], myReqs = [], myKits = [], cats = [];
 
 /* ── GAS BRIDGE ───────────────────────────────────────── */
+// คำสั่งอ่านข้อมูล (ส่งซ้ำได้ปลอดภัย) — ถ้า Google ตอบ 404/หน้า HTML/ค้าง จะตัดรอแล้วลองใหม่อัตโนมัติ (แก้ 2026-09-30)
+// คำสั่งบันทึก (submit/update/upload/…) ห้ามส่งซ้ำอัตโนมัติ
+var GS_RETRY = /^(get|lookup|lineLogin$|login$)/;
 function gs(action, data, ok, fail) {
   // cross-origin call to the GAS "Anyone" deployment (frontend is on GitHub Pages)
   // POST text/plain avoids the CORS preflight; GAS 302 -> googleusercontent serves JSON with ACAO:*
-  fetch(CONFIG.GAS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ action: action, data: data || {} })
-  })
-  .then(function(r){ return r.json(); })
-  .then(function(r){ if (ok) ok(r); })
-  .catch(function(e){
-    if (fail) fail(e);
-    else toast('เกิดข้อผิดพลาด', (e && e.message) || String(e), 'e');
-  });
+  var tries = GS_RETRY.test(action) ? 3 : 1;
+  function attempt(n) {
+    var ac = (typeof AbortController !== 'undefined' && tries > 1) ? new AbortController() : null;
+    var tm = ac ? setTimeout(function(){ try { ac.abort(); } catch(_){} }, 25000) : null;
+    fetch(CONFIG.GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: action, data: data || {} }),
+      signal: ac ? ac.signal : undefined
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(r){ if (tm) clearTimeout(tm); if (ok) ok(r); })
+    .catch(function(e){
+      if (tm) clearTimeout(tm);
+      if (n + 1 < tries) { setTimeout(function(){ attempt(n + 1); }, 1500 * (n + 1)); return; }
+      if (fail) fail(e);
+      else toast('เกิดข้อผิดพลาด', 'เชื่อมต่อระบบไม่สำเร็จ ลองใหม่อีกครั้ง', 'e');
+    });
+  }
+  attempt(0);
 }
 
 /* ── DEBUG ─────────────────────────────────────────────── */
@@ -2142,21 +2154,7 @@ function loadRequests() {
     console.log('uid sent:', uid, 'emp:', empCode);
     console.log('Requests response:', JSON.stringify(res).substring(0,200));
     if (res && res.success) {
-      myReqs = res.requests || [];
-      // fallback: ถ้าไม่มีข้อมูล ลอง fetch ทั้งหมดแล้ว filter เอง
-      if (myReqs.length === 0 && uid) {
-        gs('getPersonalAssetRequests', {}, res2 => {
-          if (res2 && res2.requests) {
-            myReqs = res2.requests.filter(r => {
-              const rid = String(r.RequesterID||'').trim();
-              return rid === uid || rid === empCode ||
-                     rid.toLowerCase() === uid.toLowerCase();
-            });
-          }
-          renderReqs();
-        }, ()=>renderReqs());
-        return;
-      }
+      myReqs = res.requests || [];   // (เดิมถ้าว่างจะดึงคำขอของทุกคน ~800KB มากรองในเครื่อง — ตัดออก 2026-09-30)
     } else {
       myReqs = [];
     }
@@ -2198,17 +2196,21 @@ function renderReqs() {
   const stTH ={Pending:'⏳ รอการอนุมัติ',Approved:'✅ อนุมัติแล้ว',Rejected:'❌ ไม่อนุมัติ'};
 
   el.innerHTML = myReqs.map(r => {
-    const rtype     = String(r.RequestType||r.Note||'').toLowerCase();
-    const isDelType = rtype.includes('delete') || rtype.includes('ลบ');
+    const rtype       = String(r.RequestType||r.Note||'').toLowerCase();
+    const isDelType    = rtype.includes('delete') || rtype.includes('ลบ');
+    const isBrokenType = String(r.RequestType||'').trim() === 'BrokenReport';
     const status    = r.Status || 'Pending';
 
-    // สีกรอบ: ลบ = แดง, ปกติ = ขาว
-    const cardBorder = isDelType ? 'border:2px solid var(--red);background:var(--red-bg);' : '';
+    // สีกรอบ: ลบ = แดง, แจ้งของเสีย = ม่วง, ปกติ = ขาว
+    const cardBorder = isDelType ? 'border:2px solid var(--red);background:var(--red-bg);'
+      : isBrokenType ? 'border:2px solid #6f42c1;background:rgba(111,66,193,.06);' : '';
     const imgBg      = isDelType ? 'background:#fdecea;' : 'background:#f0f0f0;';
 
     // label ประเภทคำขอ
     const typeBadge = isDelType
       ? `<span style="font-size:17px;font-weight:700;color:var(--red);background:var(--red-bg);padding:3px 10px;border-radius:20px;margin-bottom:6px;display:inline-block"><i class="fas fa-trash-can" style="margin-right:4px"></i>แจ้งขอลบ</span>`
+      : isBrokenType
+      ? `<span style="font-size:17px;font-weight:700;color:#6f42c1;background:rgba(111,66,193,.12);padding:3px 10px;border-radius:20px;margin-bottom:6px;display:inline-block"><i class="fas fa-triangle-exclamation" style="margin-right:4px"></i>แจ้งของเสีย/ชำรุด</span>`
       : '';
 
     // status text สำหรับ delete ที่ approved → "ลบแล้ว"
@@ -2237,7 +2239,7 @@ function renderReqs() {
             ${esc(r.AssetName||r.StandardItemName||'—')}
           </div>
           ${resolveCatName(r) ? `<div style="font-size:17px;color:var(--text2);margin-top:3px">${esc(resolveCatName(r))}</div>` : ''}
-          <div class="req-id">${esc(r.RequestID||'')} · ${(esc(r.CreatedAt||'')).split(' ')[0]||''}</div>
+          <div class="req-id">${esc(r.RequestID||'')} · ${esc(typeof fmtDT==='function'?fmtDT(r.CreatedAt):(r.CreatedAt||''))}</div>
         </div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
@@ -2903,18 +2905,6 @@ function loadKits() {
       gs('getPersonalAssetRequests', {userId:uid, employeeCode:empCode}, res2 => {
         if (res2 && res2.success) {
           myReqs = res2.requests || [];
-          if (!myReqs.length && uid) {
-            gs('getPersonalAssetRequests', {}, res3 => {
-              if (res3 && res3.requests) {
-                myReqs = res3.requests.filter(r => {
-                  const rid = String(r.RequesterID||'').trim();
-                  return rid === uid || rid === empCode || rid.toLowerCase() === uid.toLowerCase();
-                });
-              }
-              renderKits();
-            }, ()=>renderKits());
-            return;
-          }
         }
         renderKits();
       }, ()=>renderKits());
@@ -3390,6 +3380,15 @@ function loadSettingsPage() {
   document.getElementById('setDept').textContent  = (CU.Department || '') + (CU.Position ? ' · ' + CU.Position : '');
   document.getElementById('setCode').textContent  = CU.EmployeeCode ? 'EMP–USR–' + CU.EmployeeCode : (CU.UserID || '');
   document.getElementById('setAvatar').textContent = (name || 'U').charAt(0).toUpperCase();
+  // ใช้รูปโปรไฟล์เดียวกับหน้าหลัก ถ้ามี (เดิมแสดงแค่ตัวอักษรแรก — แก้ 2026-09-30)
+  try {
+    const hi = document.getElementById('avatarImg');
+    if (hi && hi.src && hi.style.display !== 'none' && hi.naturalWidth) {
+      const sa = document.getElementById('setAvatar');
+      sa.innerHTML = '<img src="' + esc(hi.src) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.remove()">';
+      sa.style.overflow = 'hidden';
+    }
+  } catch(_){}
   // เคลียร์ฟอร์ม
   ['cpOld','cpNew','cpConfirm'].forEach(id => {
     const el = document.getElementById(id);
